@@ -4,6 +4,8 @@ use crossterm::event::*;
 use crossterm::terminal::ClearType;
 use std::time::Duration;
 use std::io::stdout;
+use std::path::Path;
+use std::{cmp, env, fs};
 
 struct Editor {
     reader: Reader,
@@ -78,6 +80,7 @@ struct Output {
     win_size: (usize, usize),
     editor_contents: EditorContents,
     cursor_controller: CursorController,
+    editor_rows: EditorRows
 }
 
 impl Output {
@@ -88,12 +91,13 @@ impl Output {
         Self {
             win_size,
             editor_contents: EditorContents::new(),
-            cursor_controller: CursorController::new(win_size)
+            cursor_controller: CursorController::new(win_size),
+            editor_rows: EditorRows::new()
         }
     }
     
     fn move_cursor(&mut self, direction: KeyCode) {
-        self.cursor_controller.move_cursor(direction)
+        self.cursor_controller.move_cursor(direction, self.editor_rows.number_of_rows())
     }
 
     fn clear_screen() -> crossterm::Result<()> {
@@ -105,24 +109,32 @@ impl Output {
         let screen_row = self.win_size.1;
         let screen_column = self.win_size.0;
         for i in 0..screen_row {
-            if i == screen_row / 3 {
-                let mut welcome = format!("Rust Text Editor");
+            let file_row = i + self.cursor_controller.row_offset;
 
-                if welcome.len()> screen_column {
-                    welcome.truncate(screen_column)
-                }
-                
-                let mut padding = (screen_column - welcome.len()) / 2;
+            if file_row >= self.editor_rows.number_of_rows() {
+                if self.editor_rows.number_of_rows() == 0 && i == screen_row / 3 {
+                    let mut welcome = format!("Rust Text Editor");
 
-                if padding != 0 {
+                    if welcome.len()> screen_column {
+                        welcome.truncate(screen_column)
+                    }
+                    
+                    let mut padding = (screen_column - welcome.len()) / 2;
+
+                    if padding != 0 {
+                        self.editor_contents.push('~');
+                        padding -= 1
+                    }
+                    (0..padding).for_each(|_| self.editor_contents.push(' '));
+
+                    self.editor_contents.push_str(&welcome);
+                } else {
                     self.editor_contents.push('~');
-                    padding -= 1
                 }
-                (0..padding).for_each(|_| self.editor_contents.push(' '));
-
-                self.editor_contents.push_str(&welcome);
             } else {
-                self.editor_contents.push('~');
+                let len = cmp::min(self.editor_rows.get_row(file_row).len(), screen_column);
+                self.editor_contents.push_str(&self.editor_rows.get_row(file_row)[..len])
+
             }
 
             queue!(
@@ -137,6 +149,7 @@ impl Output {
     }
 
     fn refresh_screen(&mut self) -> crossterm::Result<()> {
+        self.cursor_controller.scroll();
         queue!(self.editor_contents, cursor::Hide, cursor::MoveTo(0, 0))? ;
         self.draw_rows();
 
@@ -193,6 +206,7 @@ struct CursorController {
     cursor_y: usize,
     screen_column: usize,
     screen_row: usize,
+    row_offset: usize,
 }
 
 impl CursorController {
@@ -202,10 +216,11 @@ impl CursorController {
             cursor_y: 0,
             screen_column: win_size.0,
             screen_row: win_size.1,
+            row_offset: 0,
         }
     }
 
-    fn move_cursor(&mut self, direction: KeyCode) {
+    fn move_cursor(&mut self, direction: KeyCode, number_of_rows: usize) {
         match direction {
             KeyCode::Up => {
                 self.cursor_y = self.cursor_y.saturating_sub(1);
@@ -216,7 +231,7 @@ impl CursorController {
                 }
             }
             KeyCode::Down => {
-                if self.cursor_y != self.screen_row -1 {
+                if self.cursor_y < number_of_rows {
                     self.cursor_y += 1;
                 }
             }
@@ -230,6 +245,14 @@ impl CursorController {
             _ => unimplemented!()
         }
     }
+
+    fn scroll(&mut self) {
+        self.row_offset = cmp::min(self.row_offset, self.cursor_y);
+        
+        if self.cursor_y >= self.row_offset + self.screen_row {
+            self.row_offset = self.cursor_y - self.screen_row + 1;
+        }
+    }
 }
 
 
@@ -241,6 +264,40 @@ impl Drop for CleanUp {
         Output::clear_screen().expect("Error");
     }
 }
+
+struct EditorRows {
+    row_contents: Vec<Box<str>>,
+}
+
+impl EditorRows {
+    fn new() -> Self {
+        let mut arg = env::args();
+
+        match arg.nth(1) {
+            None => Self {
+                row_contents: Vec::new(),
+            },
+            Some(file) => Self::from_file(file.as_ref()),
+        } 
+    }
+    
+    fn from_file(file: &Path) -> Self {
+        let file_contents = fs::read_to_string(file).expect("Unable to read file");
+
+        Self {
+            row_contents: file_contents.lines().map(|it| it.into()).collect(),
+        }
+    }
+
+    fn number_of_rows(&self) -> usize {
+        self.row_contents.len()
+    }
+
+    fn get_row(&self, at:usize) -> &str {
+        &self.row_contents[at]
+    }
+}
+
 
 fn main() -> crossterm::Result<()> {
     let _clean_up = CleanUp;
