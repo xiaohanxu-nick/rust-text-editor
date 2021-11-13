@@ -232,6 +232,9 @@ impl CursorController {
             KeyCode::Left => {
                 if self.cursor_x != 0 {
                     self.cursor_x -= 1;
+                } else  if self.cursor_y > 0 {
+                    self.cursor_y -= 1;
+                    self.cursor_x = editor_rows.get_row(self.cursor_y).len()
                 }
             }
             KeyCode::Down => {
@@ -240,6 +243,17 @@ impl CursorController {
                 }
             }
             KeyCode::Right => {
+                if self.cursor_y < number_of_rows {
+                    match self.cursor_x.cmp(&editor_rows.get_row(self.cursor_y).len()) {
+                        cmp::Ordering::Less => self.cursor_x += 1,
+                        cmp::Ordering::Equal => {
+                            self.cursor_y += 1;
+                            self.cursor_x = 0
+                        }
+                        _ => {}
+                        
+                    }
+                }
                 if self.cursor_y < number_of_rows && self.cursor_x < editor_rows.get_row(self.cursor_y).len() {
                     self.cursor_x += 1;
                 }
@@ -248,6 +262,14 @@ impl CursorController {
             KeyCode::Home => self.cursor_x = 0,
             _ => unimplemented!()
         }
+
+        let row_len = if self.cursor_y < number_of_rows {
+            editor_rows.get_row(self.cursor_y).len()
+        } else {
+            0
+        };
+
+        self.cursor_x = cmp::min(self.cursor_x, row_len);
     }
 
     fn scroll(&mut self) {
